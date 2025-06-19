@@ -1,11 +1,147 @@
 #include <stdio.h>
-#include <string.h> // For strlen
-#include <stdlib.h> // For strtof (used in main, not map_to_cartesian for radius)
-// #include <math.h> // No longer needed by map_to_cartesian
-#include "large_int_arithmetic.h" // New include
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <stddef.h>
 
-// Pre-calculated sine and cosine tables
-// Values from the issue description for angles 0, 9, 18, ..., 351 degrees
+// Function prototypes for large integer arithmetic (from large_int_arithmetic.h)
+int calculate_large_mod(const char* large_num_str, int divisor);
+int calculate_large_div_to_string(
+    const char* large_num_str,
+    int divisor,
+    char* quotient_str_out,
+    size_t quotient_buffer_size
+);
+
+// Helper function (from large_int_arithmetic.c)
+// NOTE: This was static in large_int_arithmetic.c.
+// It can remain static if only used by the arithmetic functions within this consolidated file.
+// If map_to_cartesian or main also needed it directly (they don't seem to), it would need to be non-static.
+// For now, keeping it static as its usage is localized to the arithmetic functions.
+static int is_valid_number_string(const char* s) {
+    if (!s || *s == '\0') return 0; // NULL or empty
+    // Check if it's "0"
+    if (s[0] == '0' && s[1] == '\0') return 1;
+    // Check for leading zeros if not "0"
+    // This check was originally in the helper but calculate_large_mod/div do their own full digit checks.
+    // For strict equivalence to the original, it's included.
+    // However, the actual arithmetic functions below iterate and check all digits,
+    // and handle "0" or numbers with leading zeros before this helper would be strictly necessary
+    // for their internal logic if they called it.
+    // The primary validation is done by direct iteration and isdigit checks in the arithmetic functions.
+    // This helper isn't directly called by the provided arithmetic functions, so it's effectively unused as is.
+    // To simplify and match the provided arithmetic code (which doesn't call this helper),
+    // this helper could be omitted if not used. For now, keeping it as it was in the source file.
+    if (s[0] == '0' && strlen(s) > 1) return 0;
+
+    for (size_t i = 0; s[i] != '\0'; ++i) {
+        if (!isdigit(s[i])) return 0; // Not a digit
+    }
+    return 1;
+}
+
+// Function implementation for calculate_large_mod (from large_int_arithmetic.c)
+int calculate_large_mod(const char* large_num_str, int divisor) {
+    if (!large_num_str) return -1;
+    size_t len = strlen(large_num_str);
+    if (len == 0) return -1;
+
+    for (size_t i = 0; i < len; ++i) {
+        if (!isdigit(large_num_str[i])) return -1;
+    }
+
+    if (divisor <= 0) return -1;
+
+    long long remainder = 0;
+
+    for (size_t i = 0; i < len; ++i) {
+        int digit_val = large_num_str[i] - '0';
+        remainder = (remainder * 10 + digit_val) % divisor;
+    }
+    return (int)remainder;
+}
+
+// Function implementation for calculate_large_div_to_string (from large_int_arithmetic.c)
+int calculate_large_div_to_string(
+    const char* large_num_str,
+    int divisor,
+    char* quotient_str_out,
+    size_t quotient_buffer_size
+) {
+    if (!quotient_str_out) return -1;
+    if (quotient_buffer_size == 0) {
+        if (quotient_str_out) *quotient_str_out = '\0';
+        return -1;
+    }
+    *quotient_str_out = '\0';
+
+    if (!large_num_str) return -1;
+    size_t len = strlen(large_num_str);
+    if (len == 0) return -1;
+
+    for (size_t i = 0; i < len; ++i) {
+        if (!isdigit(large_num_str[i])) return -1;
+    }
+
+    if (divisor <= 0) return -1;
+
+    if (quotient_buffer_size < 2) return -1; // Min for "0" + null terminator
+
+
+    char temp_quotient_buffer[len + 1];
+    size_t temp_idx = 0;
+    long long current_dividend_segment = 0;
+    int has_started_quotient = 0;
+
+    for (size_t i = 0; i < len; ++i) {
+        int digit_val = large_num_str[i] - '0';
+        current_dividend_segment = current_dividend_segment * 10 + digit_val;
+
+        int quotient_digit = current_dividend_segment / divisor;
+
+        if (quotient_digit > 0 || has_started_quotient) {
+            if (temp_idx < len) {
+                 temp_quotient_buffer[temp_idx++] = quotient_digit + '0';
+            } else {
+                // This case implies quotient is longer than input, which shouldn't happen for divisor > 1.
+                // If divisor is 1, quotient length can be same as input.
+                // If len is 0, this block is not entered.
+                // If temp_idx reaches len, it means quotient has 'len' digits.
+            }
+            has_started_quotient = 1;
+        }
+        current_dividend_segment = current_dividend_segment % divisor;
+    }
+
+    if (temp_idx == 0) {
+        // This handles cases like "5" / 10 = "0" or "0" / N = "0"
+        // temp_quotient_buffer must have space for at least "0" and '\0'
+        if (len >= 0 && temp_idx < (len +1) ) { // Check temp_idx is within bounds for the buffer
+             temp_quotient_buffer[temp_idx++] = '0';
+        } else {
+            // This should not be reached if quotient_buffer_size >= 2 and len+1 buffer is used
+            return -1; // Should not happen
+        }
+    }
+
+    // Null terminate the temporary buffer
+    if (temp_idx < (len + 1)) { // Ensure temp_idx is within bounds of temp_quotient_buffer
+        temp_quotient_buffer[temp_idx] = '\0';
+    } else {
+        // This means temp_idx has gone out of bounds for temp_quotient_buffer.
+        // This would be an error in logic if temp_quotient_buffer is size len+1.
+        return -1;
+    }
+
+    if (strlen(temp_quotient_buffer) + 1 > quotient_buffer_size) {
+        return -1;
+    }
+    strcpy(quotient_str_out, temp_quotient_buffer);
+
+    return 0;
+}
+
+// Pre-calculated sine and cosine tables (from mapper.c)
 const float sin_table[40] = {
     0.00000000,  0.15643447,  0.30901699,  0.45399050,  0.58778525,
     0.70710677,  0.80901699,  0.89100651,  0.95105652,  0.98768834,
@@ -28,16 +164,11 @@ const float cos_table[40] = {
     0.70710677,  0.80901699,  0.89100651,  0.95105652,  0.98768834
 };
 
-// Function to map a large number string to Cartesian coordinates
-// Parameters:
-//   const char* number_str: The input number as a string
-//   float *x_out: Pointer to store the calculated x-coordinate
-//   float *y_out: Pointer to store the calculated y-coordinate
-// Returns 0 on success, -1 on error.
+// Function to map a large number string to Cartesian coordinates (from mapper.c)
 int map_to_cartesian(const char* number_str, float *x_out, float *y_out) {
     if (number_str == NULL || x_out == NULL || y_out == NULL) {
         fprintf(stderr, "Error: NULL argument passed to map_to_cartesian.\n");
-        return -1; // Invalid arguments
+        return -1;
     }
     size_t num_len = strlen(number_str);
     if (num_len == 0) {
@@ -51,20 +182,17 @@ int map_to_cartesian(const char* number_str, float *x_out, float *y_out) {
         return -1;
     }
 
-    // Buffer for radius string: length of number_str + 1 for null terminator is max possible.
-    // Minimum size is 2 (for "0" + null terminator).
     size_t radius_buf_size = num_len + 1;
-    if (radius_buf_size < 2) { // Should only happen if num_len is 0, already checked.
+    if (radius_buf_size < 2) {
         radius_buf_size = 2;
     }
-    char actual_radius_buffer[radius_buf_size]; // Renamed from radius_str for clarity
+    char actual_radius_buffer[radius_buf_size];
 
     if (calculate_large_div_to_string(number_str, 40, actual_radius_buffer, radius_buf_size) == -1) {
         fprintf(stderr, "Error: calculate_large_div_to_string failed for input %s (gross radius calculation)\n", number_str);
         return -1;
     }
 
-    // Calculate indice_circunferencia from the gross radius string
     int indice_circunferencia = calculate_large_mod(actual_radius_buffer, 77);
     if (indice_circunferencia == -1) {
         fprintf(stderr, "Error: Failed to calculate indice_circunferencia from radius_str '%s'\n", actual_radius_buffer);
@@ -73,8 +201,6 @@ int map_to_cartesian(const char* number_str, float *x_out, float *y_out) {
 
     float R_efetivo = (float)indice_circunferencia + 1.0f;
 
-    // calculate_large_mod should ensure theta_index is within 0-39 for divisor 40.
-    // This check is good for defense.
     if (theta_index < 0 || theta_index >= 40) {
         fprintf(stderr, "Error: Invalid theta_index %d calculated for input %s. This should not happen.\n", theta_index, number_str);
         return -1;
@@ -83,9 +209,10 @@ int map_to_cartesian(const char* number_str, float *x_out, float *y_out) {
     *x_out = R_efetivo * cos_table[theta_index];
     *y_out = R_efetivo * sin_table[theta_index];
 
-    return 0; // Success
+    return 0;
 }
 
+// Main function (from mapper.c)
 int main() {
     const char* large_num_input = "9210836494447108270027136741376870869791784014198948301625976867708124077590";
     float x_coord, y_coord;
@@ -94,13 +221,10 @@ int main() {
 
     int status = map_to_cartesian(large_num_input, &x_coord, &y_coord);
 
-    // Removed raw status print here, handled in if/else block
-
     if (status == 0) {
         printf("Main: map_to_cartesian successful.\n");
         printf("Main: Input Number String: %s\n", large_num_input);
 
-        // --- Verification Calculations in Main ---
         int theta_main = calculate_large_mod(large_num_input, 40);
         printf("Main: Theta Index (from calculate_large_mod): %d\n", theta_main);
         if (theta_main != -1) {
@@ -115,7 +239,7 @@ int main() {
             printf("Main: Error calculating theta_index for verification.\n");
         }
 
-        size_t input_len = strlen(large_num_input); // Used for buffer sizing
+        size_t input_len = strlen(large_num_input);
         size_t gross_radius_buf_size = input_len + 1;
         if (gross_radius_buf_size < 2) gross_radius_buf_size = 2;
 
@@ -124,12 +248,10 @@ int main() {
         if (calculate_large_div_to_string(large_num_input, 40, gross_radius_str_main, gross_radius_buf_size) == 0) {
             printf("Main: Gross Radius String (calculated in main): %s\n", gross_radius_str_main);
 
-            // Optional: Display what strtof would do with the gross radius string
             float gross_radius_as_float = strtof(gross_radius_str_main, NULL);
             printf("Main: Gross Radius String '%s' as float (strtof): %f (scientific: %e)\n",
                    gross_radius_str_main, gross_radius_as_float, gross_radius_as_float);
 
-            // Calculate and display indice_circunferencia_main and R_efetivo_main
             int indice_circunferencia_main = calculate_large_mod(gross_radius_str_main, 77);
             if (indice_circunferencia_main != -1) {
                 printf("Main: Indice da Circunferencia (calculated in main from gross radius string): %d\n", indice_circunferencia_main);
@@ -141,14 +263,12 @@ int main() {
         } else {
             printf("Main: Error calculating Gross Radius String for verification.\n");
         }
-        // --- End of Verification Calculations ---
 
         printf("Main: X Coordinate (from map_to_cartesian with R_efetivo): %.8f\n", x_coord);
         printf("Main: Y Coordinate (from map_to_cartesian with R_efetivo): %.8f\n", y_coord);
-    } else { // Handles -1 (general error)
-        // map_to_cartesian function should have printed detailed error to stderr
+    } else {
         printf("Main: map_to_cartesian failed with status %d. Check stderr for details from the function.\n", status);
     }
 
-    return status; // Return 0 on success, non-zero on failure
+    return status;
 }
