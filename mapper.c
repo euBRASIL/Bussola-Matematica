@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h> // For strlen
-#include <stdlib.h> // For strtof
-#include <math.h>   // For isinf, isnan
+#include <stdlib.h> // For strtof (used in main, not map_to_cartesian for radius)
+// #include <math.h> // No longer needed by map_to_cartesian
 #include "large_int_arithmetic.h" // New include
 
 // Pre-calculated sine and cosine tables
@@ -57,29 +57,31 @@ int map_to_cartesian(const char* number_str, float *x_out, float *y_out) {
     if (radius_buf_size < 2) { // Should only happen if num_len is 0, already checked.
         radius_buf_size = 2;
     }
-    char radius_str[radius_buf_size];
+    char actual_radius_buffer[radius_buf_size]; // Renamed from radius_str for clarity
 
-    if (calculate_large_div_to_string(number_str, 40, radius_str, radius_buf_size) == -1) {
-        fprintf(stderr, "Error: calculate_large_div_to_string failed for input %s\n", number_str);
+    if (calculate_large_div_to_string(number_str, 40, actual_radius_buffer, radius_buf_size) == -1) {
+        fprintf(stderr, "Error: calculate_large_div_to_string failed for input %s (gross radius calculation)\n", number_str);
         return -1;
     }
 
-    float float_radius = strtof(radius_str, NULL);
-    // Check for float overflow/NaN
-    if (isinf(float_radius) || isnan(float_radius)) {
-        fprintf(stderr, "Error in map_to_cartesian: Radius string '%s' is too large and resulted in float overflow/NaN.\n", radius_str);
-        return -2; // New error code for overflow
+    // Calculate indice_circunferencia from the gross radius string
+    int indice_circunferencia = calculate_large_mod(actual_radius_buffer, 77);
+    if (indice_circunferencia == -1) {
+        fprintf(stderr, "Error: Failed to calculate indice_circunferencia from radius_str '%s'\n", actual_radius_buffer);
+        return -1;
     }
+
+    float R_efetivo = (float)indice_circunferencia + 1.0f;
 
     // calculate_large_mod should ensure theta_index is within 0-39 for divisor 40.
-    // Defensive check:
+    // This check is good for defense.
     if (theta_index < 0 || theta_index >= 40) {
         fprintf(stderr, "Error: Invalid theta_index %d calculated for input %s. This should not happen.\n", theta_index, number_str);
-        return -1; // Keep -1 for other internal errors
+        return -1;
     }
 
-    *x_out = float_radius * cos_table[theta_index];
-    *y_out = float_radius * sin_table[theta_index];
+    *x_out = R_efetivo * cos_table[theta_index];
+    *y_out = R_efetivo * sin_table[theta_index];
 
     return 0; // Success
 }
@@ -98,6 +100,7 @@ int main() {
         printf("Main: map_to_cartesian successful.\n");
         printf("Main: Input Number String: %s\n", large_num_input);
 
+        // --- Verification Calculations in Main ---
         int theta_main = calculate_large_mod(large_num_input, 40);
         printf("Main: Theta Index (from calculate_large_mod): %d\n", theta_main);
         if (theta_main != -1) {
@@ -112,33 +115,39 @@ int main() {
             printf("Main: Error calculating theta_index for verification.\n");
         }
 
-        size_t input_len = strlen(large_num_input);
-        size_t rsm_buf_size = input_len + 1; // For radius string + null terminator
-        if (rsm_buf_size < 2) rsm_buf_size = 2; // Min for "0" and '\0'
+        size_t input_len = strlen(large_num_input); // Used for buffer sizing
+        size_t gross_radius_buf_size = input_len + 1;
+        if (gross_radius_buf_size < 2) gross_radius_buf_size = 2;
 
-        char actual_rsm_buffer[rsm_buf_size];
+        char gross_radius_str_main[gross_radius_buf_size];
 
-        if (calculate_large_div_to_string(large_num_input, 40, actual_rsm_buffer, rsm_buf_size) == 0) {
-            printf("Main: Radius String (from calculate_large_div_to_string): %s\n", actual_rsm_buffer);
-            float float_radius_main = strtof(actual_rsm_buffer, NULL);
-            // Check for strtof errors (optional, but good practice)
-            // if (errno == ERANGE) {
-            //     perror("strtof error for radius_str_main");
-            // }
-            printf("Main: Float Radius (from strtof): %f\n", float_radius_main);
-            printf("Main: Float Radius (scientific notation): %e\n", float_radius_main);
+        if (calculate_large_div_to_string(large_num_input, 40, gross_radius_str_main, gross_radius_buf_size) == 0) {
+            printf("Main: Gross Radius String (calculated in main): %s\n", gross_radius_str_main);
+
+            // Optional: Display what strtof would do with the gross radius string
+            float gross_radius_as_float = strtof(gross_radius_str_main, NULL);
+            printf("Main: Gross Radius String '%s' as float (strtof): %f (scientific: %e)\n",
+                   gross_radius_str_main, gross_radius_as_float, gross_radius_as_float);
+
+            // Calculate and display indice_circunferencia_main and R_efetivo_main
+            int indice_circunferencia_main = calculate_large_mod(gross_radius_str_main, 77);
+            if (indice_circunferencia_main != -1) {
+                printf("Main: Indice da Circunferencia (calculated in main from gross radius string): %d\n", indice_circunferencia_main);
+                float R_efetivo_main = (float)indice_circunferencia_main + 1.0f;
+                printf("Main: R_efetivo (calculated in main): %.8f\n", R_efetivo_main);
+            } else {
+                printf("Main: Error calculating Indice da Circunferencia for verification.\n");
+            }
         } else {
-            printf("Main: Error calculating radius string for verification.\n");
+            printf("Main: Error calculating Gross Radius String for verification.\n");
         }
+        // --- End of Verification Calculations ---
 
-        printf("Main: X Coordinate (from map_to_cartesian): %.8f\n", x_coord);
-        printf("Main: Y Coordinate (from map_to_cartesian): %.8f\n", y_coord);
-    } else if (status == -2) {
-        // map_to_cartesian already printed detailed error to stderr for this case
-        printf("Main: map_to_cartesian failed with status %d (Radius overflow or NaN detected during float conversion).\n", status);
-    } else { // Handles -1 or any other non-zero status
-        // map_to_cartesian should have printed details to stderr for other errors too
-        printf("Main: map_to_cartesian failed with status %d (General error, check stderr for details from function).\n", status);
+        printf("Main: X Coordinate (from map_to_cartesian with R_efetivo): %.8f\n", x_coord);
+        printf("Main: Y Coordinate (from map_to_cartesian with R_efetivo): %.8f\n", y_coord);
+    } else { // Handles -1 (general error)
+        // map_to_cartesian function should have printed detailed error to stderr
+        printf("Main: map_to_cartesian failed with status %d. Check stderr for details from the function.\n", status);
     }
 
     return status; // Return 0 on success, non-zero on failure
